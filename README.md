@@ -1,2 +1,2 @@
-# ecs
-An Entity Component System written in C
+# libecs
+An archetypal Entity Component System library written in C11.

@@ -1,40 +1,78 @@
-### executable name
-TARGET	= ecs
+# libecs - Entity Component System library
 
-### directory structure
+include config.mk
+
+# target name
+TARGET	= libecs
+STATIC	= $(TARGET).$(VERSION).a
+SHARED	= $(TARGET).$(VERSION).so
+
+# directory structure
 SRCDIR	= src
 INCDIR	= include
 LIBDIR	= lib
 
-BINDIR	= bin
+OBJDIR	= obj
+OUTDIR	= out
 
-### toolchain settings
-FLAGS	= -std=c99 -Wpedantic
+TESTS	= tests
 
-CC	= gcc
-CCFLAGS	= -I$(INCDIR)
+# settings sources
+_SRC	= ecs.c
+SOURCES	= $(patsubst %,$(SRCDIR)/%,$(_SRC))
 
-LD	= gcc
-LDFLAGS	= -L$(LIBDIR)
+_INC	= ecs.h ecs_test.h
+HEADERS	= $(patsubst %,$(INCDIR)/%,$(_INC)) 
 
-### settings sources
-vpath %.h $(INCDIR)
-vpath %.c $(SRCDIR)
+_OBJ	= $(_SRC:%.c=%.o)
+OBJECTS	= $(patsubst %,$(OBJDIR)/%,$(_OBJ))
 
-SOURCES	= main.c ecs.c
-HEADERS	= ecs.h
-LIBS	= 
-
-### make targets
-all: $(BINDIR) $(BINDIR)/$(TARGET)
+# make targets
+all: $(OBJDIR) $(OUTDIR) $(INCDIR)/ecs.h $(OUTDIR)/$(STATIC) $(OUTDIR)/$(SHARED)
 
 clean:
-	-rm -rf $(OBJDIR) $(BINDIR)
+	rm -f $(INCDIR)/ecs.h
+	rm -rf $(OUTDIR) $(OBJDIR)
+	$(MAKE) -C $(TESTS) clean
 
-$(BINDIR):
-	mkdir $(BINDIR)
+install: all
+	mkdir -p $(DESTDIR)$(PREFIX)/include/libecs
+	cp -rf $(INCDIR)/* $(DESTDIR)$(PREFIX)/include/libecs
+	cp out/$(STATIC) $(DESTDIR)$(PREFIX)/lib
+	ln -sf $(STATIC) $(DESTDIR)$(PREFIX)/lib/$(TARGET).a
+	cp out/$(SHARED) $(DESTDIR)$(PREFIX)/lib
+	ln -sf $(SHARED) $(DESTDIR)$(PREFIX)/lib/$(TARGET).so
 
-$(BINDIR)/$(TARGET): $(SOURCES)
-	$(CC) $(FLAGS) $(CCFLAGS) $(LDFLAGS) $(CFLAGS) -o $@ $^ $(LIBS)
+test:
+	$(MAKE) -C $(TESTS)
 
-.PHONY: all clean
+uninstall:
+	rm -rf $(DESTDIR)$(PREFIX)/include/libecs
+	unlink $(DESTDIR)$(PREFIX)/lib/$(TARGET).a
+	rm $(DESTDIR)$(PREFIX)/lib/$(STATIC)
+	unlink $(DESTDIR)$(PREFIX)/lib/$(TARGET).so
+	rm $(DESTDIR)$(PREFIX)/lib/$(SHARED)
+
+$(INCDIR)/ecs.h:
+	cp ecs.h.gen $@
+	sed -i "s/@VERSION_PATCH@/$(PATCH)/g" $(INCDIR)/ecs.h
+	sed -i "s/@VERSION_MINOR@/$(MINOR)/g" $(INCDIR)/ecs.h
+	sed -i "s/@VERSION_MAJOR@/$(MAJOR)/g" $(INCDIR)/ecs.h
+	sed -i "s/@VERSION@/\"$(VERSION)\"/g" $(INCDIR)/ecs.h
+
+$(OBJDIR):
+	mkdir $(OBJDIR)
+
+$(OUTDIR):
+	mkdir $(OUTDIR)
+
+$(OBJECTS): $(OBJDIR)/%.o: $(SRCDIR)/%.c $(HEADERS)
+	$(LD) $(CFLAGS) -Iinclude -c -o $@ $<
+
+$(OUTDIR)/$(STATIC): $(OBJECTS)
+	$(AR) crs $@ $^
+
+$(OUTDIR)/$(SHARED): $(OBJECTS)
+	$(CC) $(LDFLAGS) -Iinclude -shared -fPIC -o $@ $^
+
+.PHONY: all clean install test uninstall
