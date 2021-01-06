@@ -1,0 +1,9 @@
+#!/bin/sh
+
+. ./common.sh
+
+[ -d $OBJDIR ] && rm -rf $OBJDIR
+[ -d $OUTDIR ] && rm -rf $OUTDIR
+
+rm -f $TESTS/*.x
+

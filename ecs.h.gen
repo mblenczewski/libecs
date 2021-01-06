@@ -6,4 +6,8 @@
 #define ECS_VERSION_MAJOR @VERSION_MAJOR@
 #define ECS_VERSION @VERSION@
 
+unsigned int calculate(unsigned int num);
+
+unsigned int calculate2(unsigned int num);
+
 #endif // ECS_H

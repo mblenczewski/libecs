@@ -1,0 +1,13 @@
+#!/bin/sh
+
+. ./common.sh
+
+# clean out stale tests
+rm -r $TESTS/*.x
+
+# compile then run each test, printing results to screen
+for TEST_SRC in $TESTS/*.c; do
+	$CC $CFLAGS -I$INCDIR -o $TEST_SRC.x $TEST_SRC
+	./$TEST_SRC.x
+done
+

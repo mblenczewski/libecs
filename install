@@ -1,0 +1,16 @@
+#!/bin/sh
+
+. ./common.sh
+
+# create include path
+mkdir -p ${DESTDIR}${PREFIX}/include/$TARGET
+cp -rf $INCDIR/* ${DESTDIR}${PREFIX}/include/$TARGET
+
+# copy over versioned archive and create convenience symlink
+cp -p $OUTDIR/$STATIC ${DESTDIR}${PREFIX}/lib
+ln -sf $STATIC ${DESTDIR}${PREFIX}/lib/$TARGET.a
+
+# copy over versioned shared object and create convenience symlink
+cp $OUTDIR/$SHARED ${DESTDIR}${PREFIX}/lib
+ln -sf $SHARED ${DESTDIR}${PREFIX}/lib/$TARGET.so
+

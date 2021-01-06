@@ -1,0 +1,15 @@
+#!/bin/sh
+
+. ./common.sh
+
+# remove include path
+rm -rf ${DESTDIR}${PREFIX}/include/$TARGET
+
+# unlink convenience symlink and remove versioned archive
+unlink ${DESTDIR}${PREFIX}/lib/$TARGET.a
+rm ${DESTDIR}${PREFIX}/lib/$STATIC
+
+# unlink convenience symlink and remove versioned shared object
+unlink ${DESTDIR}${PREFIX}/lib/$TARGET.so
+rm ${DESTDIR}${PREFIX}/lib/$SHARED
+

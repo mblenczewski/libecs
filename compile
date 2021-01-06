@@ -1,0 +1,24 @@
+#!/bin/sh
+
+. ./common.sh
+
+# ensure that our build directories exist
+mkdir -p $OBJDIR $OUTDIR
+
+# template our library header
+cp ecs.h.gen $INCDIR/ecs.h
+sed -i "s/@VERSION_PATCH@/$LIBECS_PATCH/g" $INCDIR/ecs.h
+sed -i "s/@VERSION_MINOR@/$LIBECS_MINOR/g" $INCDIR/ecs.h
+sed -i "s/@VERSION_MAJOR@/$LIBECS_MAJOR/g" $INCDIR/ecs.h
+sed -i "s/@VERSION@/\"$LIBECS_VERSION\"/g" $INCDIR/ecs.h
+
+# perform the unity build
+$CC $CFLAGS -I$INCDIR -c -o $OBJDIR/$TARGET.o $SRCDIR/ecs_unity_build.c
+
+# build the static library
+$AR crs $OUTDIR/$STATIC $OBJDIR/$TARGET.o
+$RANLIB $OUTDIR/$STATIC
+
+# build the shared library
+$LD $LDFLAGS -I$INCDIR -shared -o $OUTDIR/$SHARED $OBJDIR/$TARGET.o
+
