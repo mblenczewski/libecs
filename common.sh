@@ -1,15 +1,15 @@
 #!/bin/sh
 
-# libecs version
-LIBECS_PATCH=0
-LIBECS_MINOR=1
-LIBECS_MAJOR=0
-LIBECS_VERSION="$LIBECS_PATCH.$LIBECS_MINOR.$LIBECS_MAJOR" 
+# version
+PATCH=0
+MINOR=1
+MAJOR=0
+VERSION="$PATCH.$MINOR.$MAJOR" 
 
-# libecs target
+# target
 TARGET=libecs
-STATIC=$TARGET.$LIBECS_VERSION.a
-SHARED=$TARGET.$LIBECS_VERSION.so
+STATIC=$TARGET.$VERSION.a
+SHARED=$TARGET.$VERSION.so
 
 # directory structure
 SRCDIR=src
@@ -26,7 +26,7 @@ INCLUDES=
 LIBRARIES=
 
 # toolchain flags
-CFLAGS="-std=c11 -Wpedantic -fPIC $INCLUDES"
+CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -fPIC $INCLUDES"
 LDFLAGS="$LIBRARIES"
 
 # toolchain

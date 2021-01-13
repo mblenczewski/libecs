@@ -2,8 +2,6 @@
 
 . ./common.sh
 
-[ -d $OBJDIR ] && rm -rf $OBJDIR
-[ -d $OUTDIR ] && rm -rf $OUTDIR
-
-rm -f $TESTS/*.x
-
+[ -d $OBJDIR ] && rm -r $OBJDIR
+[ -d $OUTDIR ] && rm -r $OUTDIR
+[ -d $OUTDIR/$TESTS/ ] && rm -r $OUTDIR/$TESTS/

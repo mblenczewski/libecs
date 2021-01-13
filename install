@@ -13,4 +13,3 @@ ln -sf $STATIC ${DESTDIR}${PREFIX}/lib/$TARGET.a
 # copy over versioned shared object and create convenience symlink
 cp $OUTDIR/$SHARED ${DESTDIR}${PREFIX}/lib
 ln -sf $SHARED ${DESTDIR}${PREFIX}/lib/$TARGET.so
-

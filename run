@@ -1,0 +1,8 @@
+#!/bin/sh
+
+. ./common.sh
+
+# build the example program
+$CC $CFLAGS $LDFLAGS -I$INCDIR -L$OUTDIR -lecs.$VERSION -o $OUTDIR/example example.c
+
+LD_LIBRARY_PATH=$OUTDIR $OUTDIR/example

@@ -3,4 +3,4 @@ obj/
 out/
 
 # build artefacts
-include/ecs.h
+include/version.h

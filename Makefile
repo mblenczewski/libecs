@@ -9,10 +9,13 @@ clean:
 install: build
 	./install
 
-test:
+run: build test
+	./run
+
+test: build
 	./test
 
 uninstall:
 	./uninstall
 
-.PHONY: all build clean install test uninstall
+.PHONY: all build clean install run test uninstall

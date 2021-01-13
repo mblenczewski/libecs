@@ -3,11 +3,13 @@
 . ./common.sh
 
 # clean out stale tests
-rm -r $TESTS/*.x
+[ -d $OUTDIR/$TESTS ] && rm -r $OUTDIR/$TESTS
+mkdir $OUTDIR/$TESTS
 
 # compile then run each test, printing results to screen
-for TEST_SRC in $TESTS/*.c; do
-	$CC $CFLAGS -I$INCDIR -o $TEST_SRC.x $TEST_SRC
-	./$TEST_SRC.x
-done
+for TEST_SRC in $(find $TESTS/ -name '*.c'); do
+	EXE="$(basename $TEST_SRC .c)"
+	$CC $CFLAGS -I$TESTS -I$INCDIR -L$OUTDIR -l$TARGET.$VERSION -o $OUTDIR/$TESTS/$EXE $TEST_SRC
 
+	LD_LIBRARY_PATH=$OUTDIR $OUTDIR/$TESTS/$EXE
+done

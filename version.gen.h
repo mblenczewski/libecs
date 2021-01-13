@@ -1,13 +1,9 @@
-#ifndef ECS_H
-#define ECS_H
+#ifndef ECS_VERSION_H
+#define ECS_VERSION_H
 
 #define ECS_VERSION_PATCH @VERSION_PATCH@
 #define ECS_VERSION_MINOR @VERSION_MINOR@
 #define ECS_VERSION_MAJOR @VERSION_MAJOR@
 #define ECS_VERSION @VERSION@
 
-unsigned int calculate(unsigned int num);
-
-unsigned int calculate2(unsigned int num);
-
-#endif // ECS_H
+#endif // ECS_VERSION_H
