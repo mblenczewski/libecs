@@ -24,6 +24,4 @@ typedef int64_t s64;
 typedef float f32;
 typedef double f64;
 
-// TODO: Result "generic" macro. would be nice to have
-
 #endif // ECS_H

@@ -2,7 +2,23 @@
 
 . ./common.sh
 
+# create convenience symlinks to versionned libecs library
+ln -sf $SHARED $OUTDIR/$TARGET.so.$MAJOR
+ln -sf $TARGET.so.$MAJOR $OUTDIR/$TARGET.so
+
+# copy over dependency libraries and create convenience symlinks
+cp $CGLM/libcglm.so.0.7.9 $GLFW/libglfw.so.3.3.2 $VK/libvulkan.so.1.2.162 $OUTDIR
+
+ln -sf libcglm.so.0.7.9 $OUTDIR/libcglm.so.0
+ln -sf libcglm.so.0 $OUTDIR/libcglm.so
+
+ln -sf libglfw.so.3.3.2 $OUTDIR/libglfw.so.3
+ln -sf libglfw.so.3 $OUTDIR/libglfw.so
+
+ln -sf libvulkan.so.1.2.162 $OUTDIR/libvulkan.so.1
+ln -sf libvulkan.so.1 $OUTDIR/libvulkan.so
+
 # build the example program
-$CC $CFLAGS $LDFLAGS -I$INCDIR -L$OUTDIR -lecs.$VERSION -o $OUTDIR/example example.c
+$CC $CFLAGS $LDFLAGS -I$INCDIR -L$OUTDIR -lecs -o $OUTDIR/example example.c
 
 LD_LIBRARY_PATH=$OUTDIR $OUTDIR/example

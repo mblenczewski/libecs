@@ -8,8 +8,10 @@ cp -rf $INCDIR/* ${DESTDIR}${PREFIX}/include/$TARGET
 
 # copy over versioned archive and create convenience symlink
 cp -p $OUTDIR/$STATIC ${DESTDIR}${PREFIX}/lib
-ln -sf $STATIC ${DESTDIR}${PREFIX}/lib/$TARGET.a
+ln -sf $TARGET.a.$MAJOR ${DESTDIR}${PREFIX}/lib/$TARGET.a
+ln -sf $STATIC ${DESTDIR}${PREFIX}/lib/$TARGET.a.$MAJOR
 
 # copy over versioned shared object and create convenience symlink
 cp $OUTDIR/$SHARED ${DESTDIR}${PREFIX}/lib
-ln -sf $SHARED ${DESTDIR}${PREFIX}/lib/$TARGET.so
+ln -sf $TARGET.so.$MAJOR ${DESTDIR}${PREFIX}/lib/$TARGET.so
+ln -sf $SHARED ${DESTDIR}${PREFIX}/lib/$TARGET.so.$MAJOR

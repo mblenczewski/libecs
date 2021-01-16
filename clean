@@ -4,4 +4,4 @@
 
 [ -d $OBJDIR ] && rm -r $OBJDIR
 [ -d $OUTDIR ] && rm -r $OUTDIR
-[ -d $OUTDIR/$TESTS/ ] && rm -r $OUTDIR/$TESTS/
+exit 0

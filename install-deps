@@ -1,0 +1,18 @@
+#!/bin/sh
+
+. ./common.sh
+
+# install cglm dependency library
+cp $CGLM/libcglm.so.0.7.9 ${DESTDIR}${PREFIX}/lib
+ln -sf libcglm.so.0.7.9 ${DESTDIR}${PREFIX}/lib/libcglm.so.0
+ln -sf libcglm.so.0 ${DESTDIR}${PREFIX}/lib/libcglm.so
+
+# install glfw dependency library
+cp $GLFW/libglfw.so.3.3.2 ${DESTDIR}${PREFIX}/lib
+ln -sf libglfw.so.3.3.2 ${DESTDIR}${PREFIX}/lib/libglfw.so.3
+ln -sf libglfw.so.3 ${DESTDIR}${PREFIX}/lib/libglfw.so
+
+# install vulkan dependency library
+cp $VK/libvulkan.so.1.2.162 ${DESTDIR}${PREFIX}/lib
+ln -sf libvulkan.so.1.2.162 ${DESTDIR}${PREFIX}/lib/libvulkan.so.1
+ln -sf libvulkan.so.1 ${DESTDIR}${PREFIX}/lib/libvulkan.so

@@ -7,8 +7,10 @@ rm -rf ${DESTDIR}${PREFIX}/include/$TARGET
 
 # unlink convenience symlink and remove versioned archive
 unlink ${DESTDIR}${PREFIX}/lib/$TARGET.a
+unlink ${DESTDIR}${PREFIX}/lib/$TARGET.a.$MAJOR
 rm ${DESTDIR}${PREFIX}/lib/$STATIC
 
 # unlink convenience symlink and remove versioned shared object
 unlink ${DESTDIR}${PREFIX}/lib/$TARGET.so
+unlink ${DESTDIR}${PREFIX}/lib/$TARGET.so.$MAJOR
 rm ${DESTDIR}${PREFIX}/lib/$SHARED

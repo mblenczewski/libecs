@@ -6,8 +6,11 @@ build:
 clean:
 	./clean
 
-install: build
+install: build test
 	./install
+
+install-deps:
+	./install-deps
 
 run: build test
 	./run
@@ -18,4 +21,4 @@ test: build
 uninstall:
 	./uninstall
 
-.PHONY: all build clean install run test uninstall
+.PHONY: all build clean install install-deps run test uninstall
