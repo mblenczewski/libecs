@@ -7,3 +7,4 @@
 #define ECS_VERSION @VERSION@
 
 #endif // ECS_VERSION_H
+

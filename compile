@@ -5,12 +5,24 @@
 # ensure that our build directories exist
 mkdir -p $OBJDIR $OUTDIR
 
+# copy over dependency libraries and create convenience symlinks
+cp $CGLM/libcglm.so.0.7.9 $GLFW/libglfw.so.3.3.2 $VK/libvulkan.so.1.2.162 $OUTDIR
+
+ln -sf libcglm.so.0.7.9 $OUTDIR/libcglm.so.0
+ln -sf libcglm.so.0 $OUTDIR/libcglm.so
+
+ln -sf libglfw.so.3.3.2 $OUTDIR/libglfw.so.3
+ln -sf libglfw.so.3 $OUTDIR/libglfw.so
+
+ln -sf libvulkan.so.1.2.162 $OUTDIR/libvulkan.so.1
+ln -sf libvulkan.so.1 $OUTDIR/libvulkan.so
+
 # template our library header
-cp version.gen.h $INCDIR/version.h
-sed -i "s/@VERSION_PATCH@/$PATCH/g" $INCDIR/version.h
-sed -i "s/@VERSION_MINOR@/$MINOR/g" $INCDIR/version.h
-sed -i "s/@VERSION_MAJOR@/$MAJOR/g" $INCDIR/version.h
-sed -i "s/@VERSION@/\"$VERSION\"/g" $INCDIR/version.h
+cp ecs_version.gen.h $INCDIR/ecs_version.h
+sed -i "s/@VERSION_PATCH@/$PATCH/g" $INCDIR/ecs_version.h
+sed -i "s/@VERSION_MINOR@/$MINOR/g" $INCDIR/ecs_version.h
+sed -i "s/@VERSION_MAJOR@/$MAJOR/g" $INCDIR/ecs_version.h
+sed -i "s/@VERSION@/\"$VERSION\"/g" $INCDIR/ecs_version.h
 
 # perform the unity build
 $CC $CFLAGS -I$INCDIR -c -o $OBJDIR/$TARGET.o $SRCDIR/unity_build.c
@@ -21,3 +33,10 @@ $RANLIB $OUTDIR/$STATIC
 
 # build the shared library
 $LD $LDFLAGS -I$INCDIR -shared -o $OUTDIR/$SHARED $OBJDIR/$TARGET.o
+
+# create convenience symlinks to versionned libecs library
+ln -sf $STATIC $OUTDIR/$TARGET.a.$MAJOR
+ln -sf $TARGET.a.$MAJOR $OUTDIR/$TARGET.a
+
+ln -sf $SHARED $OUTDIR/$TARGET.so.$MAJOR
+ln -sf $TARGET.so.$MAJOR $OUTDIR/$TARGET.so

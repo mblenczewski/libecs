@@ -1,0 +1,10 @@
+#ifndef ECS_VERSION_H
+#define ECS_VERSION_H
+
+#define ECS_VERSION_PATCH 0
+#define ECS_VERSION_MINOR 1
+#define ECS_VERSION_MAJOR 0
+#define ECS_VERSION "0.1.0"
+
+#endif // ECS_VERSION_H
+

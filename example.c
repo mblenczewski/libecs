@@ -1,5 +1,5 @@
 #include "ecs.h"
-#include "version.h"
+#include "ecs_version.h"
 
 #include <stdio.h>
 
