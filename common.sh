@@ -33,8 +33,7 @@ INCLUDES="-I$CGLM/include -I$GLFW/include -I$VK/include"
 LIBRARIES="-L$CGLM -lcglm -L$GLFW -lglfw -L$VK -lvulkan -ldl -lX11 -lXxf86vm -lXrandr -lXi"
 
 # toolchain flags
-NDEBUG="-DNDEBUG"
-CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -fPIC $INCLUDES $NDEBUG"
+CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -fPIC $INCLUDES"
 LDFLAGS="$LIBRARIES"
 
 # toolchain

@@ -2,6 +2,9 @@
 #define ECS_SYSTEM_H
 
 #include "ecs.h"
+#include "ecs_component.h"
+
+typedef u64 sid_t;
 
 enum ecs_system_errno {
 	ECS_SYSTEM_OK,
@@ -12,11 +15,15 @@ enum ecs_system_errno {
 typedef b8 (*ecs_system_setup)();
 typedef void (*ecs_system_teardown)();
 
-struct ecs_system {
-	char *name;
-	ecs_system_setup setup;
-	ecs_system_teardown teardown; 
+#define ECS_SYSTEM_MAX_ACTIONS 8
+
+struct ecs_system_action {
+	usize archetype_length;
+	cid_t *archetype;
+	enum ecs_system_errno(*delegate)();
 };
+
+struct ecs_system;
 
 #endif // ECS_SYSTEM_H
 

@@ -8,27 +8,27 @@ struct ecs_memory_arena {
 	// TODO: is there a way of converting "base" from a pointer to a flexible length array member?
 };
 
-b8 ecs_memory_arena_try_create(usize alignment, usize size, struct ecs_memory_arena **arena) {
+b8 ecs_memory_arena_try_create(usize alignment, usize size, struct ecs_memory_arena **out) {
 	ECS_ASSERT(size % alignment == 0, "Given size must be a multiple of the given alignment!");
-	ECS_ASSERT(arena, "Given arena out pointer is null!");
-	ECS_ASSERT_NE(*arena, "Given arena out pointer points to non-null value (would overwrite existing arena)!");
+	ECS_ASSERT(out, "Given out pointer is null!");
+	ECS_ASSERT_NE(*out, "Given out pointer points to non-null value (would overwrite existing arena)!");
 
-	*arena = malloc(sizeof(struct ecs_memory_arena));
-	if (*arena) {
-		(*arena)->offset = 0;
-		(*arena)->length = size;
+	*out = malloc(sizeof(struct ecs_memory_arena));
+	if (*out) {
+		(*out)->offset = 0;
+		(*out)->length = size;
 
 		u8 *arena_memory = aligned_alloc(alignment, size);
 		if (arena_memory) {
-			(*arena)->base = arena_memory;
+			(*out)->base = arena_memory;
 			return true;
 		}
 
 		free(arena_memory);
 	}
 
-	free(*arena);
-	*arena = NULL;
+	free(*out);
+	*out = NULL;
 
 	return false;
 }

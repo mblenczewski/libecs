@@ -28,7 +28,7 @@ typedef float f32;
 typedef double f64;
 
 /* Assertions */
-#ifndef NDEBUG
+#ifdef NDEBUG
 
 #define __ECS_ASSERT_IMPL(condition, message, file, line) ((void)0)
 #define __ECS_ASSERT_NE_IMPL(condition, message, file, line) ((void)0)
