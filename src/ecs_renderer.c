@@ -114,6 +114,7 @@ struct ecs_renderer {
 	VkImage *swapchain_images;
 	VkImageView *swapchain_image_views;
 	VkFramebuffer *swapchain_framebuffers;
+	b8 framebuffers_were_resized;
 
 	VkRenderPass render_pass;
 	VkPipelineLayout pipeline_layout;
@@ -135,6 +136,7 @@ static b8 ecs_renderer_try_create_surface(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_select_physical_device(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_logical_device(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_swapchain(struct ecs_renderer *renderer);
+static b8 ecs_renderer_try_recreate_swapchain(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_image_views(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_render_pass(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_graphics_pipeline(struct ecs_renderer *renderer);
@@ -142,6 +144,13 @@ static b8 ecs_renderer_try_create_framebuffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_command_pool(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_semaphores(struct ecs_renderer *renderer);
+
+static void ecs_renderer_cleanup_swapchain(struct ecs_renderer *renderer);
+
+static void ecs_renderer_framebuffers_resized_callback(GLFWwindow *window, int width, int height) {
+	struct ecs_renderer *renderer = glfwGetWindowUserPointer(window);
+	renderer->framebuffers_were_resized = true;
+}
 
 b8 ecs_renderer_try_setup(u32 width, u32 height, GLFWwindow *window, struct ecs_renderer **out) {
 	ECS_ASSERT(window, "Given GLFW window pointer is null!");
@@ -155,6 +164,9 @@ b8 ecs_renderer_try_setup(u32 width, u32 height, GLFWwindow *window, struct ecs_
 		(*out)->width = width;
 		(*out)->height = height;
 		(*out)->window = window;
+
+		glfwSetWindowUserPointer((*out)->window, *out);
+		glfwSetFramebufferSizeCallback((*out)->window, ecs_renderer_framebuffers_resized_callback);
 
 		b8 succeeded = false;
 		
@@ -256,6 +268,8 @@ void ecs_renderer_teardown(struct ecs_renderer *renderer) {
 
 	vkDeviceWaitIdle(renderer->device);
 
+	ecs_renderer_cleanup_swapchain(renderer);
+
 	for (usize i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		vkDestroySemaphore(renderer->device, renderer->render_finished_semaphores[i], vk_allocator);
 		vkDestroySemaphore(renderer->device, renderer->image_available_semaphores[i], vk_allocator);
@@ -264,19 +278,6 @@ void ecs_renderer_teardown(struct ecs_renderer *renderer) {
 
 	vkDestroyCommandPool(renderer->device, renderer->command_pool, vk_allocator);
 
-	for (usize i = 0; i < renderer->swapchain_image_count; i++) {
-		vkDestroyFramebuffer(renderer->device, renderer->swapchain_framebuffers[i], vk_allocator);
-	}
-
-	vkDestroyPipeline(renderer->device, renderer->pipeline, vk_allocator);
-	vkDestroyPipelineLayout(renderer->device, renderer->pipeline_layout, vk_allocator);
-	vkDestroyRenderPass(renderer->device, renderer->render_pass, vk_allocator);
-
-	for (usize i = 0; i < renderer->swapchain_image_count; i++) {
-		vkDestroyImageView(renderer->device, renderer->swapchain_image_views[i], vk_allocator);
-	}
-
-	vkDestroySwapchainKHR(renderer->device, renderer->swapchain, vk_allocator);
 	vkDestroyDevice(renderer->device, vk_allocator);
 
 #ifndef NDEBUG
@@ -295,7 +296,15 @@ void ecs_renderer_render_frame(struct ecs_renderer *renderer) {
 	vkWaitForFences(renderer->device, 1, &renderer->in_flight_fences[renderer->current_frame], VK_TRUE, UINT64_MAX);
 
 	u32 image_index;
-	vkAcquireNextImageKHR(renderer->device, renderer->swapchain, UINT64_MAX, renderer->image_available_semaphores[renderer->current_frame], VK_NULL_HANDLE, &image_index);
+	VkResult acquire_result = vkAcquireNextImageKHR(renderer->device, renderer->swapchain, UINT64_MAX, renderer->image_available_semaphores[renderer->current_frame], VK_NULL_HANDLE, &image_index);
+
+	if (acquire_result == VK_ERROR_OUT_OF_DATE_KHR) {
+		if (!ecs_renderer_try_recreate_swapchain(renderer))
+			printf("Failed to recreate swapchain!\n");
+		return;
+	} else if (acquire_result != VK_SUCCESS && acquire_result != VK_SUBOPTIMAL_KHR) {
+		printf("Could not acquire swapchain image!\n");
+	}
 
 	if (renderer->images_in_flight[image_index] != VK_NULL_HANDLE) {
 		vkWaitForFences(renderer->device, 1, &renderer->images_in_flight[image_index], VK_TRUE, UINT64_MAX);
@@ -328,7 +337,7 @@ void ecs_renderer_render_frame(struct ecs_renderer *renderer) {
 	vkResetFences(renderer->device, 1, &renderer->in_flight_fences[renderer->current_frame]);
 
 	if (vkQueueSubmit(renderer->graphics_queue, 1, &submit_info, renderer->in_flight_fences[renderer->current_frame]) != VK_SUCCESS)
-		printf("You done fucked it!\n");
+		printf("Failed to submit work to the graphics queue!\n");
 
 	const VkSwapchainKHR swapchains[] = {
 		renderer->swapchain,
@@ -343,7 +352,15 @@ void ecs_renderer_render_frame(struct ecs_renderer *renderer) {
 		.pImageIndices = &image_index,
 	};
 
-	vkQueuePresentKHR(renderer->present_queue, &present_info);
+	VkResult present_result = vkQueuePresentKHR(renderer->present_queue, &present_info);
+
+	if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR || renderer->framebuffers_were_resized) {
+		renderer->framebuffers_were_resized = false;
+		if (!ecs_renderer_try_recreate_swapchain(renderer))
+			printf("Failed to recreate swapchain!\n");
+	} else if (present_result != VK_SUCCESS) {
+		printf("Failed to present swapchain image!\n");
+	}
 
 	renderer->current_frame = (renderer->current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -633,7 +650,7 @@ static b8 ecs_renderer_try_select_physical_device(struct ecs_renderer *renderer)
 static b8 ecs_renderer_try_create_logical_device(struct ecs_renderer *renderer) {
 	struct queue_family_indices indices = find_queue_families(renderer, renderer->physical_device);
 
-	printf("Graphics family idx: %lu, Present family idx: %lu\n", indices.graphics_family, indices.present_family);
+	printf("Has graphics family: %d, Graphics family idx: %lu, Has present family: %d, Present family idx: %lu\n", indices.has_graphics_family, indices.graphics_family, indices.has_present_family, indices.present_family);
 
 	const float queue_priorities[] = { 1.0f };
 	VkDeviceQueueCreateInfo graphics_queue_create_info = {
@@ -783,6 +800,61 @@ static b8 ecs_renderer_try_create_swapchain(struct ecs_renderer *renderer) {
 	renderer->swapchain_extent = surface_extent;
 
 	return true;
+}
+
+static b8 ecs_renderer_try_recreate_swapchain(struct ecs_renderer *renderer) {
+	int width = 0, height = 0;
+	do {
+		glfwGetFramebufferSize(renderer->window, &width, &height);
+		glfwWaitEvents();
+	} while (width == 0 || height == 0);
+
+	vkDeviceWaitIdle(renderer->device);
+
+	ecs_renderer_cleanup_swapchain(renderer);
+
+	b8 succeeded = false;
+	succeeded = ecs_renderer_try_create_swapchain(renderer);
+	if (!succeeded)
+		return false;
+
+	succeeded = ecs_renderer_try_create_image_views(renderer);
+	if (!succeeded)
+		return false;
+
+	succeeded = ecs_renderer_try_create_render_pass(renderer);
+	if (!succeeded)
+		return false;
+
+	succeeded = ecs_renderer_try_create_graphics_pipeline(renderer);
+	if (!succeeded)
+		return false;
+
+	succeeded = ecs_renderer_try_create_framebuffers(renderer);
+	if (!succeeded)
+		return false;
+
+	succeeded = ecs_renderer_try_create_command_buffers(renderer);
+
+	return succeeded;
+}
+
+static void ecs_renderer_cleanup_swapchain(struct ecs_renderer *renderer) {
+	for (usize i = 0; i < renderer->swapchain_image_count; i++) {
+		vkDestroyFramebuffer(renderer->device, renderer->swapchain_framebuffers[i], vk_allocator);
+	}
+
+	vkFreeCommandBuffers(renderer->device, renderer->command_pool, renderer->swapchain_image_count, renderer->command_buffers);
+
+	vkDestroyPipeline(renderer->device, renderer->pipeline, vk_allocator);
+	vkDestroyPipelineLayout(renderer->device, renderer->pipeline_layout, vk_allocator);
+	vkDestroyRenderPass(renderer->device, renderer->render_pass, vk_allocator);
+
+	for (usize i = 0; i < renderer->swapchain_image_count; i++) {
+		vkDestroyImageView(renderer->device, renderer->swapchain_image_views[i], vk_allocator);
+	}
+
+	vkDestroySwapchainKHR(renderer->device, renderer->swapchain, vk_allocator);
 }
 
 static b8 ecs_renderer_try_create_image_views(struct ecs_renderer *renderer) {
