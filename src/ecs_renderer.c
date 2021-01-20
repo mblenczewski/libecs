@@ -30,7 +30,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL vk_layer_debug_callback(
 
 static VkDebugUtilsMessengerCreateInfoEXT vk_debug_utils_messenger_create_info() {
 	VkDebugUtilsMessageSeverityFlagsEXT severity = 0;
-	severity |= VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT;
+	/* severity |= VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT; */
 	severity |= VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT;
 	severity |= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT;
 	severity |= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
@@ -125,7 +125,7 @@ struct ecs_renderer {
 	VkSemaphore image_available_semaphores[MAX_FRAMES_IN_FLIGHT];
 	VkSemaphore render_finished_semaphores[MAX_FRAMES_IN_FLIGHT];
 	VkFence in_flight_fences[MAX_FRAMES_IN_FLIGHT];
-	VkFence images_in_flight[MAX_FRAMES_IN_FLIGHT];
+	VkFence *images_in_flight;
 	usize current_frame;
 };
 
@@ -257,8 +257,8 @@ void ecs_renderer_teardown(struct ecs_renderer *renderer) {
 	vkDeviceWaitIdle(renderer->device);
 
 	for (usize i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		vkDestroySemaphore(renderer->device, renderer->image_available_semaphores[i], vk_allocator);
 		vkDestroySemaphore(renderer->device, renderer->render_finished_semaphores[i], vk_allocator);
+		vkDestroySemaphore(renderer->device, renderer->image_available_semaphores[i], vk_allocator);
 		vkDestroyFence(renderer->device, renderer->in_flight_fences[i], vk_allocator);
 	}
 
@@ -300,18 +300,17 @@ void ecs_renderer_render_frame(struct ecs_renderer *renderer) {
 	if (renderer->images_in_flight[image_index] != VK_NULL_HANDLE) {
 		vkWaitForFences(renderer->device, 1, &renderer->images_in_flight[image_index], VK_TRUE, UINT64_MAX);
 	}
-
 	renderer->images_in_flight[image_index] = renderer->in_flight_fences[renderer->current_frame];
 
-	VkSemaphore wait_semaphores[] = {
+	const VkSemaphore wait_semaphores[] = {
 		renderer->image_available_semaphores[renderer->current_frame],
 	};
 
-	VkPipelineStageFlags wait_stages[] = {
+	const VkPipelineStageFlags wait_stages[] = {
 		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 	};
 
-	VkSemaphore signal_semaphores[] = {
+	const VkSemaphore signal_semaphores[] = {
 		renderer->render_finished_semaphores[renderer->current_frame],
 	};
 
@@ -331,20 +330,20 @@ void ecs_renderer_render_frame(struct ecs_renderer *renderer) {
 	if (vkQueueSubmit(renderer->graphics_queue, 1, &submit_info, renderer->in_flight_fences[renderer->current_frame]) != VK_SUCCESS)
 		printf("You done fucked it!\n");
 
-	VkSwapchainKHR swapchains[] = {
+	const VkSwapchainKHR swapchains[] = {
 		renderer->swapchain,
 	};
 
 	VkPresentInfoKHR present_info = {
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = signal_semaphores,
 		.swapchainCount = 1,
 		.pSwapchains = swapchains,
 		.pImageIndices = &image_index,
-		.pResults = NULL,
 	};
 
 	vkQueuePresentKHR(renderer->present_queue, &present_info);
-	vkQueueWaitIdle(renderer->present_queue);
 
 	renderer->current_frame = (renderer->current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -516,9 +515,9 @@ static struct queue_family_indices find_queue_families(struct ecs_renderer *rend
 		}
 
 		VkBool32 present_queue_support = false;
-		VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(device, i, renderer_surface, &present_queue_support);
+		vkGetPhysicalDeviceSurfaceSupportKHR(device, i, renderer_surface, &present_queue_support);
 
-		if (result == VK_SUCCESS && present_queue_support) {
+		if (present_queue_support) {
 			indices.present_family = i;
 			indices.has_present_family = true;
 		}
@@ -634,6 +633,8 @@ static b8 ecs_renderer_try_select_physical_device(struct ecs_renderer *renderer)
 static b8 ecs_renderer_try_create_logical_device(struct ecs_renderer *renderer) {
 	struct queue_family_indices indices = find_queue_families(renderer, renderer->physical_device);
 
+	printf("Graphics family idx: %lu, Present family idx: %lu\n", indices.graphics_family, indices.present_family);
+
 	const float queue_priorities[] = { 1.0f };
 	VkDeviceQueueCreateInfo graphics_queue_create_info = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -658,8 +659,8 @@ static b8 ecs_renderer_try_create_logical_device(struct ecs_renderer *renderer) 
 
 	VkDeviceCreateInfo device_create_info = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.queueCreateInfoCount = sizeof(queue_create_infos) / sizeof(VkDeviceQueueCreateInfo),
-		.pQueueCreateInfos = (const VkDeviceQueueCreateInfo*)&queue_create_infos,
+		.queueCreateInfoCount = 2,
+		.pQueueCreateInfos = queue_create_infos,
 		.pEnabledFeatures = &physical_device_features,
 		.enabledExtensionCount = DEVICE_EXTENSION_COUNT,
 		.ppEnabledExtensionNames = DEVICE_EXTENSIONS,
@@ -1173,12 +1174,23 @@ static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer)
 }
 
 static b8 ecs_renderer_try_create_semaphores(struct ecs_renderer *renderer) {
+	if (renderer->images_in_flight) {
+		renderer->images_in_flight = realloc(renderer->images_in_flight, sizeof(VkFence) * renderer->swapchain_image_count);
+	} else {
+		renderer->images_in_flight = malloc(sizeof(VkFence) * renderer->swapchain_image_count);
+	}
+
+	for (usize i = 0; i < renderer->swapchain_image_count; i++) {
+		renderer->images_in_flight[i] = VK_NULL_HANDLE;
+	}
+
 	VkSemaphoreCreateInfo semaphore_create_info = {
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
 	};
 
 	VkFenceCreateInfo fence_create_info = {
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
 	};
 
 	VkResult result;
@@ -1194,8 +1206,6 @@ static b8 ecs_renderer_try_create_semaphores(struct ecs_renderer *renderer) {
 		result = vkCreateFence(renderer->device, &fence_create_info, vk_allocator, &renderer->in_flight_fences[i]);
 		if (result != VK_SUCCESS)
 			return false;
-
-		renderer->images_in_flight[i] = VK_NULL_HANDLE;
 	}
 
 	return true;
