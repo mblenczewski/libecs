@@ -1,0 +1,6 @@
+#!/bin/sh
+
+. ./common.sh
+
+glslc $GLFLAGS -fshader-stage=vert $SHADERS/base.vert.glsl -o $OUTDIR/base.vert.spv
+glslc $GLFLAGS -fshader-stage=frag $SHADERS/base.frag.glsl -o $OUTDIR/base.frag.spv

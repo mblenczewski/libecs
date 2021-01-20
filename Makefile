@@ -12,8 +12,11 @@ install: build test
 install-deps:
 	./install-deps
 
-run: build test
+run: build test shaders
 	./run
+
+shaders:
+	./shaders
 
 test: build
 	./test
@@ -21,4 +24,4 @@ test: build
 uninstall:
 	./uninstall
 
-.PHONY: all build clean install install-deps run test uninstall
+.PHONY: all build clean install install-deps run shaders test uninstall

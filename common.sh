@@ -21,6 +21,12 @@ DEPDIR=deps
 OBJDIR=obj
 OUTDIR=out
 
+# asset location
+ASSETS=assets
+SHADERS=$ASSETS/shaders
+
+GLFLAGS="-O0 --target-env=vulkan1.0 --target-spv=spv1.0 -Werror"
+
 # test location
 TESTS=tests
 
