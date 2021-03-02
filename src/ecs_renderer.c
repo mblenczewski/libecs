@@ -3,6 +3,7 @@
 #include "ecs_renderer.h"
 
 #include <string.h>
+#include <cglm/cglm.h>
 
 const VkAllocationCallbacks *vk_allocator = NULL;
 
@@ -15,6 +16,13 @@ const char *DEVICE_EXTENSIONS[] = {
 	"VK_KHR_swapchain",
 };
 const usize DEVICE_EXTENSION_COUNT = sizeof(DEVICE_EXTENSIONS) / sizeof(const char*);
+
+const struct ecs_vertex vertices[] = {
+	{{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+};
+const usize vertex_count = sizeof(vertices) / sizeof(struct ecs_vertex);
 
 #define MAX_FRAMES_IN_FLIGHT 2
 
@@ -74,6 +82,18 @@ static void vk_destroy_debug_utils_messenger(
 		func(instance, callback, allocator);
 }
 
+static const VkVertexInputBindingDescription ECS_VERTEX_BINDING_DESCRIPTION = {
+	.binding = 0,
+	.stride = sizeof(struct ecs_vertex),
+	.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+};
+
+static const VkVertexInputAttributeDescription ECS_VERTEX_ATTRIBUTE_DESCRIPTIONS[] = {
+	{.binding = 0, .location = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = offsetof(struct ecs_vertex, pos)},
+	{.binding = 0, .location = 1, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(struct ecs_vertex, colour)},
+};
+const usize ECS_VERTEX_ATTRIBUTE_DESCRIPTION_COUNT = sizeof(ECS_VERTEX_ATTRIBUTE_DESCRIPTIONS) / sizeof(VkVertexInputAttributeDescription);
+
 struct queue_family_indices {
 	u32 graphics_family;
 	u32 present_family;
@@ -120,6 +140,9 @@ struct ecs_renderer {
 	VkPipelineLayout pipeline_layout;
 	VkPipeline pipeline;
 
+	VkBuffer vertex_buffer;
+	VkDeviceMemory vertex_buffer_memory;
+
 	VkCommandPool command_pool;
 	VkCommandBuffer *command_buffers;
 
@@ -129,6 +152,302 @@ struct ecs_renderer {
 	VkFence *images_in_flight;
 	usize current_frame;
 };
+
+
+static b8 vk_instance_supports_extensions(usize count, const char **extensions) {
+	u32 instance_extension_count = 0;
+	vkEnumerateInstanceExtensionProperties(NULL, &instance_extension_count, NULL);
+
+	VkExtensionProperties *instance_extensions = malloc(sizeof(VkExtensionProperties) * instance_extension_count);
+	vkEnumerateInstanceExtensionProperties(NULL, &instance_extension_count, instance_extensions);
+
+	for (usize i = 0; i < count; i++) {
+		const char *required_extension = extensions[i];
+
+		b8 extension_found = false;
+		for (usize j = 0; j < instance_extension_count; j++) {
+			VkExtensionProperties extension = instance_extensions[j];
+
+			if (strcmp(required_extension, extension.extensionName) == 0) {
+				extension_found = true;
+				break;
+			}
+		}
+
+		if (!extension_found) {
+			free(instance_extensions);
+
+			return false;	
+		}
+	}
+
+	free(instance_extensions);
+
+	return true;
+}
+
+static b8 vk_instance_supports_layers(usize count, const char **layers) {
+	u32 instance_layer_count = 0;
+	vkEnumerateInstanceLayerProperties(&instance_layer_count, NULL);
+
+	VkLayerProperties *instance_layers = malloc(sizeof(VkLayerProperties) * instance_layer_count);
+	vkEnumerateInstanceLayerProperties(&instance_layer_count, instance_layers);
+
+	for (usize i = 0; i < count; i++) {
+		const char *required_layer = layers[i];
+
+		b8 layer_found = false;
+		for (usize j = 0; j < instance_layer_count; j++) {
+			VkLayerProperties layer = instance_layers[j];
+
+			if (strcmp(required_layer, layer.layerName) == 0) {
+				layer_found = true;
+				break;
+			}
+		}
+
+		if (!layer_found) {
+			free(instance_layers);
+
+			return false;
+		}
+	}
+
+	free(instance_layers);
+
+	return true;
+}
+
+static b8 vk_physical_device_supports_extensions(VkPhysicalDevice device, usize count, const char **extensions) {
+	u32 device_extension_count = 0;
+	vkEnumerateDeviceExtensionProperties(device, NULL, &device_extension_count, NULL);
+
+	VkExtensionProperties *device_extensions = malloc(sizeof(VkExtensionProperties) * device_extension_count);
+	vkEnumerateDeviceExtensionProperties(device, NULL, &device_extension_count, device_extensions);
+
+	for (usize i = 0; i < count; i++) {
+		const char *required_extension = extensions[i];
+
+		b8 extension_found = false;
+		for (usize j = 0; j < device_extension_count; j++) {
+			VkExtensionProperties extension = device_extensions[j];
+
+			if (strcmp(required_extension, extension.extensionName) == 0) {
+				extension_found = true;
+				break;
+			}
+		}
+
+		if (!extension_found) {
+			free(device_extensions);
+
+			return false;	
+		}
+	}
+
+	free(device_extensions);
+
+	return true;
+}
+
+static struct queue_family_indices find_queue_families(struct ecs_renderer *renderer, VkPhysicalDevice device) {
+	VkSurfaceKHR renderer_surface = renderer->surface;
+	struct queue_family_indices indices = {0};
+
+	u32 queue_family_count = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, NULL);
+
+	VkQueueFamilyProperties *queue_families = malloc(sizeof(VkQueueFamilyProperties) * queue_family_count);
+	vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, queue_families);
+
+	for (usize i = 0; i < queue_family_count; i++) {
+		if (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+			indices.graphics_family = i;
+			indices.has_graphics_family = true;
+		}
+
+		VkBool32 present_queue_support = false;
+		vkGetPhysicalDeviceSurfaceSupportKHR(device, i, renderer_surface, &present_queue_support);
+
+		if (present_queue_support) {
+			indices.present_family = i;
+			indices.has_present_family = true;
+		}
+
+		if (queue_family_indices_is_complete(indices))
+			break;
+	}
+
+	free(queue_families);
+
+	return indices;
+}
+
+static struct swapchain_support_details query_swapchain_support(struct ecs_renderer *renderer, VkPhysicalDevice device) {
+	VkSurfaceKHR renderer_surface = renderer->surface;
+	struct swapchain_support_details details = {0};	
+
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, renderer_surface, &details.capabilities);
+
+	u32 surface_format_count = 0;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(device, renderer_surface, &surface_format_count, NULL);
+
+	if (surface_format_count > 0) {
+		details.format_count = surface_format_count;
+		details.formats = malloc(sizeof(VkSurfaceFormatKHR) * surface_format_count);
+		vkGetPhysicalDeviceSurfaceFormatsKHR(device, renderer_surface, &surface_format_count, details.formats);
+	}
+
+	u32 surface_present_mode_count = 0;
+	vkGetPhysicalDeviceSurfacePresentModesKHR(device, renderer_surface, &surface_present_mode_count, NULL);
+
+	if (surface_present_mode_count > 0) {
+		details.present_mode_count = surface_present_mode_count;
+		details.present_modes = malloc(sizeof(VkPresentModeKHR) * surface_present_mode_count);
+		vkGetPhysicalDeviceSurfacePresentModesKHR(device, renderer_surface, &surface_present_mode_count, details.present_modes);
+	}
+
+	return details;
+}
+
+// NOTE(mikolaj): add some form of scoring to favour discrete GPUs over iGPUs?
+static b8 physical_device_is_suitable(struct ecs_renderer *renderer, VkPhysicalDevice device) {
+	struct queue_family_indices indices = find_queue_families(renderer, device);
+
+	b8 device_extensions_supported = vk_physical_device_supports_extensions(device, DEVICE_EXTENSION_COUNT, DEVICE_EXTENSIONS);
+
+	b8 swapchain_adequate = false;
+	if (device_extensions_supported) {
+		struct swapchain_support_details details = query_swapchain_support(renderer, device);
+		swapchain_adequate = details.format_count > 0 && details.present_mode_count > 0;
+	}
+
+	return queue_family_indices_is_complete(indices) && device_extensions_supported && swapchain_adequate;
+}
+
+static usize read_sprv_shader(const char *path, u32 **out) {
+	FILE *shader_file = fopen(path, "rb");
+
+	int err = fseek(shader_file, 0, SEEK_END);
+	int size = ftell(shader_file);
+	rewind(shader_file);
+
+	*out = malloc(size);
+	if (*out) {
+		usize read = fread(*out, sizeof(char), size / sizeof(char), shader_file);
+		ECS_ASSERT(read == (usize)size, "Number of bytes read from shader does not match file size!");
+
+		fclose(shader_file);
+		return read;
+	}
+
+	return -1;
+}
+
+static b8 try_create_shader_module(VkDevice device, usize count, u32 *shader_code, VkShaderModule *out) {
+	VkShaderModuleCreateInfo module_create_info = {
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = count,
+		.pCode = shader_code,
+	};
+
+	VkResult result = vkCreateShaderModule(device, &module_create_info, vk_allocator, out);
+	return result == VK_SUCCESS;
+}
+
+static b8 try_find_memory_type(VkPhysicalDevice physical_device, u32 memory_type_mask, VkMemoryPropertyFlags flags, u32 *out) {
+	VkPhysicalDeviceMemoryProperties memory_properties;
+	vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+	for (u32 i = 0; i < memory_properties.memoryTypeCount; i++) {
+		b8 property_flags_match = (memory_properties.memoryTypes[i].propertyFlags & flags) == flags;
+		if (memory_type_mask & (1 << i) && property_flags_match) {
+			*out = i;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static b8 try_create_buffer(VkDevice device, VkPhysicalDevice physical_device, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer *buffer, VkDeviceMemory *buffer_memory) {
+	VkBufferCreateInfo buffer_create_info = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = size,
+		.usage = usage,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
+
+	if (vkCreateBuffer(device, &buffer_create_info, vk_allocator, buffer) != VK_SUCCESS) {
+		return false;
+	}
+
+	VkMemoryRequirements memory_requirements;
+	vkGetBufferMemoryRequirements(device, *buffer, &memory_requirements);
+
+	u32 memory_type_index;
+	if (!try_find_memory_type(physical_device, memory_requirements.memoryTypeBits, properties, &memory_type_index)) {
+		return false;
+	}
+
+	VkMemoryAllocateInfo memory_allocate_info = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = memory_requirements.size,
+		.memoryTypeIndex = memory_type_index,
+	};
+
+	if (vkAllocateMemory(device, &memory_allocate_info, vk_allocator, buffer_memory) != VK_SUCCESS) {
+		return false;
+	}
+
+	vkBindBufferMemory(device, *buffer, *buffer_memory, 0);
+
+	return true;
+}
+
+static b8 try_copy_buffer(VkDevice device, VkCommandPool command_pool, VkQueue graphics_queue, VkBuffer src, VkBuffer dst, VkDeviceSize size) {
+	VkCommandBufferAllocateInfo copy_command_buffer_allocate_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandPool = command_pool,
+		.commandBufferCount = 1,
+	};
+
+	VkCommandBuffer copy_command_buffer;
+	vkAllocateCommandBuffers(device, &copy_command_buffer_allocate_info, &copy_command_buffer);
+
+	VkCommandBufferBeginInfo copy_command_buffer_begin_info = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+
+	vkBeginCommandBuffer(copy_command_buffer, &copy_command_buffer_begin_info);
+
+	VkBufferCopy copy_region = {
+		.srcOffset = 0,
+		.dstOffset = 0,
+		.size = size
+	};
+
+	vkCmdCopyBuffer(copy_command_buffer, src, dst, 1, &copy_region);
+
+	vkEndCommandBuffer(copy_command_buffer);
+
+	VkSubmitInfo copy_submit_info = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &copy_command_buffer,
+	};
+
+	// TODO(mikolaj): consider fences to allow multiple memory copies to 
+	// occur in parallel?
+	vkQueueSubmit(graphics_queue, 1, &copy_submit_info, VK_NULL_HANDLE);
+	vkQueueWaitIdle(graphics_queue);
+
+	vkFreeCommandBuffers(device, command_pool, 1, &copy_command_buffer);
+
+	return true;
+}
 
 static b8 ecs_renderer_try_create_instance(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_setup_debug_utils_messenger(struct ecs_renderer *renderer);
@@ -142,6 +461,7 @@ static b8 ecs_renderer_try_create_render_pass(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_graphics_pipeline(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_framebuffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_command_pool(struct ecs_renderer *renderer);
+static b8 ecs_renderer_try_create_vertex_buffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_semaphores(struct ecs_renderer *renderer);
 
@@ -236,6 +556,12 @@ b8 ecs_renderer_try_setup(u32 width, u32 height, GLFWwindow *window, struct ecs_
 			goto cleanup;
 		}
 
+		succeeded = ecs_renderer_try_create_vertex_buffers(*out);
+		if (!succeeded) {
+			printf("Could not create vertex buffers!\n");
+			goto cleanup;
+		}
+
 		succeeded = ecs_renderer_try_create_command_buffers(*out);
 		if (!succeeded) {
 			printf("Could not create command buffers!\n");
@@ -269,6 +595,9 @@ void ecs_renderer_teardown(struct ecs_renderer *renderer) {
 	vkDeviceWaitIdle(renderer->device);
 
 	ecs_renderer_cleanup_swapchain(renderer);
+
+	vkDestroyBuffer(renderer->device, renderer->vertex_buffer, vk_allocator);
+	vkFreeMemory(renderer->device, renderer->vertex_buffer_memory, vk_allocator);
 
 	for (usize i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
 		vkDestroySemaphore(renderer->device, renderer->render_finished_semaphores[i], vk_allocator);
@@ -365,70 +694,6 @@ void ecs_renderer_render_frame(struct ecs_renderer *renderer) {
 	renderer->current_frame = (renderer->current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-static b8 vk_instance_supports_layers(usize count, const char **layers) {
-	u32 instance_layer_count = 0;
-	vkEnumerateInstanceLayerProperties(&instance_layer_count, NULL);
-
-	VkLayerProperties *instance_layers = malloc(sizeof(VkLayerProperties) * instance_layer_count);
-	vkEnumerateInstanceLayerProperties(&instance_layer_count, instance_layers);
-
-	for (usize i = 0; i < count; i++) {
-		const char *required_layer = layers[i];
-
-		b8 layer_found = false;
-		for (usize j = 0; j < instance_layer_count; j++) {
-			VkLayerProperties layer = instance_layers[j];
-
-			if (strcmp(required_layer, layer.layerName) == 0) {
-				layer_found = true;
-				break;
-			}
-		}
-
-		if (!layer_found) {
-			free(instance_layers);
-
-			return false;
-		}
-	}
-
-	free(instance_layers);
-
-	return true;
-}
-
-static b8 vk_instance_supports_extensions(usize count, const char **extensions) {
-	u32 instance_extension_count = 0;
-	vkEnumerateInstanceExtensionProperties(NULL, &instance_extension_count, NULL);
-
-	VkExtensionProperties *instance_extensions = malloc(sizeof(VkExtensionProperties) * instance_extension_count);
-	vkEnumerateInstanceExtensionProperties(NULL, &instance_extension_count, instance_extensions);
-
-	for (usize i = 0; i < count; i++) {
-		const char *required_extension = extensions[i];
-
-		b8 extension_found = false;
-		for (usize j = 0; j < instance_extension_count; j++) {
-			VkExtensionProperties extension = instance_extensions[j];
-
-			if (strcmp(required_extension, extension.extensionName) == 0) {
-				extension_found = true;
-				break;
-			}
-		}
-
-		if (!extension_found) {
-			free(instance_extensions);
-
-			return false;	
-		}
-	}
-
-	free(instance_extensions);
-
-	return true;
-}
-
 static b8 ecs_renderer_try_create_instance(struct ecs_renderer *renderer) {
 #ifndef NDEBUG
 	b8 have_required_layers = vk_instance_supports_layers(VALIDATION_LAYER_COUNT, VALIDATION_LAYERS);
@@ -457,8 +722,8 @@ static b8 ecs_renderer_try_create_instance(struct ecs_renderer *renderer) {
 		return false;
 
 	required_extension_count += 1;
-	required_extensions = realloc(required_extensions, sizeof(const char*) * required_extension_count);
-	required_extensions[0] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+	required_extensions = realloc(required_extensions, sizeof(const char*));
+	required_extensions[0] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;	
 #endif
 
 	u32 glfw_extension_count = 0;
@@ -515,113 +780,6 @@ static b8 ecs_renderer_try_create_surface(struct ecs_renderer *renderer) {
 	return result == VK_SUCCESS;
 }
 
-static struct queue_family_indices find_queue_families(struct ecs_renderer *renderer, VkPhysicalDevice device) {
-	VkSurfaceKHR renderer_surface = renderer->surface;
-	struct queue_family_indices indices = {0};
-
-	u32 queue_family_count = 0;
-	vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, NULL);
-
-	VkQueueFamilyProperties *queue_families = malloc(sizeof(VkQueueFamilyProperties) * queue_family_count);
-	vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, queue_families);
-
-	for (usize i = 0; i < queue_family_count; i++) {
-		if (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-			indices.graphics_family = i;
-			indices.has_graphics_family = true;
-		}
-
-		VkBool32 present_queue_support = false;
-		vkGetPhysicalDeviceSurfaceSupportKHR(device, i, renderer_surface, &present_queue_support);
-
-		if (present_queue_support) {
-			indices.present_family = i;
-			indices.has_present_family = true;
-		}
-
-		if (queue_family_indices_is_complete(indices))
-			break;
-	}
-
-	free(queue_families);
-
-	return indices;
-}
-
-static b8 vk_device_supports_extensions(VkPhysicalDevice device, usize count, const char **extensions) {
-	u32 device_extension_count = 0;
-	vkEnumerateDeviceExtensionProperties(device, NULL, &device_extension_count, NULL);
-
-	VkExtensionProperties *device_extensions = malloc(sizeof(VkExtensionProperties) * device_extension_count);
-	vkEnumerateDeviceExtensionProperties(device, NULL, &device_extension_count, device_extensions);
-
-	for (usize i = 0; i < count; i++) {
-		const char *required_extension = extensions[i];
-
-		b8 extension_found = false;
-		for (usize j = 0; j < device_extension_count; j++) {
-			VkExtensionProperties extension = device_extensions[j];
-
-			if (strcmp(required_extension, extension.extensionName) == 0) {
-				extension_found = true;
-				break;
-			}
-		}
-
-		if (!extension_found) {
-			free(device_extensions);
-
-			return false;	
-		}
-	}
-
-	free(device_extensions);
-
-	return true;
-}
-
-static struct swapchain_support_details query_swapchain_support(struct ecs_renderer *renderer, VkPhysicalDevice device) {
-	VkSurfaceKHR renderer_surface = renderer->surface;
-	struct swapchain_support_details details = {0};	
-
-	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, renderer_surface, &details.capabilities);
-
-	u32 surface_format_count = 0;
-	vkGetPhysicalDeviceSurfaceFormatsKHR(device, renderer_surface, &surface_format_count, NULL);
-
-	if (surface_format_count > 0) {
-		details.format_count = surface_format_count;
-		details.formats = malloc(sizeof(VkSurfaceFormatKHR) * surface_format_count);
-		vkGetPhysicalDeviceSurfaceFormatsKHR(device, renderer_surface, &surface_format_count, details.formats);
-	}
-
-	u32 surface_present_mode_count = 0;
-	vkGetPhysicalDeviceSurfacePresentModesKHR(device, renderer_surface, &surface_present_mode_count, NULL);
-
-	if (surface_present_mode_count > 0) {
-		details.present_mode_count = surface_present_mode_count;
-		details.present_modes = malloc(sizeof(VkPresentModeKHR) * surface_present_mode_count);
-		vkGetPhysicalDeviceSurfacePresentModesKHR(device, renderer_surface, &surface_present_mode_count, details.present_modes);
-	}
-
-	return details;
-}
-
-// NOTE(mikolaj): add some form of scoring to favour discrete GPUs over iGPUs?
-static b8 physical_device_is_suitable(struct ecs_renderer *renderer, VkPhysicalDevice device) {
-	struct queue_family_indices indices = find_queue_families(renderer, device);
-
-	b8 device_extensions_supported = vk_device_supports_extensions(device, DEVICE_EXTENSION_COUNT, DEVICE_EXTENSIONS);
-
-	b8 swapchain_adequate = false;
-	if (device_extensions_supported) {
-		struct swapchain_support_details details = query_swapchain_support(renderer, device);
-		swapchain_adequate = details.format_count > 0 && details.present_mode_count > 0;
-	}
-
-	return queue_family_indices_is_complete(indices) && device_extensions_supported && swapchain_adequate;
-}
-
 static b8 ecs_renderer_try_select_physical_device(struct ecs_renderer *renderer) {
 	renderer->physical_device = VK_NULL_HANDLE;
 
@@ -649,8 +807,6 @@ static b8 ecs_renderer_try_select_physical_device(struct ecs_renderer *renderer)
 
 static b8 ecs_renderer_try_create_logical_device(struct ecs_renderer *renderer) {
 	struct queue_family_indices indices = find_queue_families(renderer, renderer->physical_device);
-
-	printf("Has graphics family: %d, Graphics family idx: %lu, Has present family: %d, Present family idx: %lu\n", indices.has_graphics_family, indices.graphics_family, indices.has_present_family, indices.present_family);
 
 	const float queue_priorities[] = { 1.0f };
 	VkDeviceQueueCreateInfo graphics_queue_create_info = {
@@ -769,18 +925,19 @@ static b8 ecs_renderer_try_create_swapchain(struct ecs_renderer *renderer) {
 		.oldSwapchain = VK_NULL_HANDLE, // TODO(mikolaj): revisit in a later chapter
 	};
 
-	struct queue_family_indices tmp = find_queue_families(renderer, renderer->physical_device);
-	const u32 indices[] = { tmp.graphics_family, tmp.present_family };
+	struct queue_family_indices indices = find_queue_families(renderer, renderer->physical_device);
+	const u32 family_indices[] = {
+		indices.graphics_family,
+		indices.present_family
+	};
 
-	if (tmp.graphics_family != tmp.present_family) {
+	if (indices.graphics_family != indices.present_family) {
 		swapchain_create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-		swapchain_create_info.queueFamilyIndexCount = sizeof(indices) / sizeof(u32);
-		swapchain_create_info.pQueueFamilyIndices = indices;
+		swapchain_create_info.queueFamilyIndexCount = sizeof(family_indices) / sizeof(u32);
+		swapchain_create_info.pQueueFamilyIndices = family_indices;
 	} else {
 		/* if our queues are the same, we can use the more performant EXCLUSIVE sharing mode */
 		swapchain_create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		swapchain_create_info.queueFamilyIndexCount = 0;
-		swapchain_create_info.pQueueFamilyIndices = NULL;
 	}
 
 	VkResult result = vkCreateSwapchainKHR(renderer->device, &swapchain_create_info, vk_allocator, &renderer->swapchain);
@@ -944,36 +1101,6 @@ static b8 ecs_renderer_try_create_render_pass(struct ecs_renderer *renderer) {
 	return result == VK_SUCCESS;
 }
 
-static usize read_sprv_shader(const char *path, u32 **out) {
-	FILE *shader_file = fopen(path, "rb");
-
-	int err = fseek(shader_file, 0, SEEK_END);
-	int size = ftell(shader_file);
-	rewind(shader_file);
-
-	*out = malloc(size);
-	if (*out) {
-		usize read = fread(*out, sizeof(char), size / sizeof(char), shader_file);
-		ECS_ASSERT(read == (usize)size, "Number of bytes read from shader does not match file size!");
-
-		fclose(shader_file);
-		return read;
-	}
-
-	return -1;
-}
-
-static b8 try_create_shader_module(VkDevice device, usize count, u32 *shader_code, VkShaderModule *out) {
-	VkShaderModuleCreateInfo module_create_info = {
-		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.codeSize = count,
-		.pCode = shader_code,
-	};
-
-	VkResult result = vkCreateShaderModule(device, &module_create_info, vk_allocator, out);
-	return result == VK_SUCCESS;
-}
-
 static b8 ecs_renderer_try_create_graphics_pipeline(struct ecs_renderer *renderer) {
 	u32 *vert_shader = NULL;
 	usize vert_shader_size = read_sprv_shader("out/base.vert.spv", &vert_shader);
@@ -1016,10 +1143,10 @@ static b8 ecs_renderer_try_create_graphics_pipeline(struct ecs_renderer *rendere
 	
 	VkPipelineVertexInputStateCreateInfo vertex_input_state_create_info = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-		.vertexBindingDescriptionCount = 0,
-		.pVertexBindingDescriptions = NULL,
-		.vertexAttributeDescriptionCount = 0,
-		.pVertexAttributeDescriptions = NULL,
+		.vertexBindingDescriptionCount = 1,
+		.pVertexBindingDescriptions = &ECS_VERTEX_BINDING_DESCRIPTION,
+		.vertexAttributeDescriptionCount = ECS_VERTEX_ATTRIBUTE_DESCRIPTION_COUNT,
+		.pVertexAttributeDescriptions = ECS_VERTEX_ATTRIBUTE_DESCRIPTIONS,
 	};
 
 	VkPipelineInputAssemblyStateCreateInfo input_assembly_state_create_info = {
@@ -1190,6 +1317,40 @@ static b8 ecs_renderer_try_create_command_pool(struct ecs_renderer *renderer) {
 	return result == VK_SUCCESS;
 }
 
+static b8 ecs_renderer_try_create_vertex_buffers(struct ecs_renderer *renderer) {
+	VkDeviceSize vertex_buffer_size = sizeof(struct ecs_vertex) * vertex_count;
+
+	VkBufferUsageFlags staging_usage_flags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+	VkMemoryPropertyFlags staging_property_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+	
+	VkBuffer staging_buffer;
+	VkDeviceMemory staging_buffer_memory;
+	if (!try_create_buffer(renderer->device, renderer->physical_device, vertex_buffer_size, staging_usage_flags, staging_property_flags, &staging_buffer, &staging_buffer_memory)) {
+		return false;
+	}
+
+	void* data;
+	vkMapMemory(renderer->device, staging_buffer_memory, 0, vertex_buffer_size, 0, &data);
+	memcpy(data, vertices, vertex_buffer_size);
+	vkUnmapMemory(renderer->device, staging_buffer_memory);
+
+
+	VkBufferUsageFlags usage_flags = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	VkMemoryPropertyFlags property_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+	if (!try_create_buffer(renderer->device, renderer->physical_device, vertex_buffer_size, usage_flags, property_flags, &renderer->vertex_buffer, &renderer->vertex_buffer_memory)) {
+		return false;
+	}
+
+	if(!try_copy_buffer(renderer->device, renderer->command_pool, renderer->graphics_queue, staging_buffer, renderer->vertex_buffer, vertex_buffer_size)) {
+		return false;
+	}
+
+	vkDestroyBuffer(renderer->device, staging_buffer, vk_allocator);
+	vkFreeMemory(renderer->device, staging_buffer_memory, vk_allocator);
+
+	return true;
+}
+
 static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer) {
 	if (renderer->command_buffers) {
 		renderer->command_buffers = realloc(renderer->command_buffers, sizeof(VkCommandBuffer) * renderer->swapchain_image_count);
@@ -1234,7 +1395,11 @@ static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer)
 
 		vkCmdBindPipeline(renderer->command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->pipeline);
 
-		vkCmdDraw(renderer->command_buffers[i], 3, 1, 0, 0);
+		VkBuffer vertex_buffers[] = { renderer->vertex_buffer };
+		VkDeviceSize offsets[] = { 0 };
+		vkCmdBindVertexBuffers(renderer->command_buffers[i], 0, 1, vertex_buffers, offsets);
+
+		vkCmdDraw(renderer->command_buffers[i], vertex_count, 1, 0, 0);
 
 		vkCmdEndRenderPass(renderer->command_buffers[i]);
 
