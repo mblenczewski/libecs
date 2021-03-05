@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
 	GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, NAME, NULL, NULL);
 
 	struct ecs_renderer *renderer = NULL;
-	b8 did_setup = ecs_renderer_try_setup(WIDTH, HEIGHT, window, &renderer);
+	b8 did_setup = ecs_renderer_try_alloc(WIDTH, HEIGHT, window, &renderer);
 	ECS_ASSERT(did_setup, "Could not setup renderer!");
 	ECS_ASSERT(renderer, "Renderer pointer was null!");
 
@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
 		ecs_renderer_render_frame(renderer);
 	}
 
-	ecs_renderer_teardown(renderer);
+	ecs_renderer_free(renderer);
 
 	glfwDestroyWindow(window);
 	glfwTerminate();

@@ -10,8 +10,8 @@
 
 struct ecs_renderer;
 
-extern b8 ecs_renderer_try_setup(u32 width, u32 height, GLFWwindow *window, struct ecs_renderer **out);
-extern void ecs_renderer_teardown(struct ecs_renderer *renderer);
+extern b8 ecs_renderer_try_alloc(u32 width, u32 height, GLFWwindow *window, struct ecs_renderer **out);
+extern void ecs_renderer_free(struct ecs_renderer *renderer);
 
 extern void ecs_renderer_render_frame(struct ecs_renderer *renderer);
 

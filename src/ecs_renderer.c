@@ -18,11 +18,17 @@ const char *DEVICE_EXTENSIONS[] = {
 const usize DEVICE_EXTENSION_COUNT = sizeof(DEVICE_EXTENSIONS) / sizeof(const char*);
 
 const struct ecs_vertex vertices[] = {
-	{{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-	{{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
 };
 const usize vertex_count = sizeof(vertices) / sizeof(struct ecs_vertex);
+
+const u32 indices[] = {
+	0, 1, 2, 2, 3, 0
+};
+const usize index_count = sizeof(indices) / sizeof(u32);
 
 #define MAX_FRAMES_IN_FLIGHT 2
 
@@ -142,6 +148,8 @@ struct ecs_renderer {
 
 	VkBuffer vertex_buffer;
 	VkDeviceMemory vertex_buffer_memory;
+	VkBuffer index_buffer;
+	VkDeviceMemory index_buffer_memory;
 
 	VkCommandPool command_pool;
 	VkCommandBuffer *command_buffers;
@@ -462,6 +470,7 @@ static b8 ecs_renderer_try_create_graphics_pipeline(struct ecs_renderer *rendere
 static b8 ecs_renderer_try_create_framebuffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_command_pool(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_vertex_buffers(struct ecs_renderer *renderer);
+static b8 ecs_renderer_try_create_index_buffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_semaphores(struct ecs_renderer *renderer);
 
@@ -472,7 +481,7 @@ static void ecs_renderer_framebuffers_resized_callback(GLFWwindow *window, int w
 	renderer->framebuffers_were_resized = true;
 }
 
-b8 ecs_renderer_try_setup(u32 width, u32 height, GLFWwindow *window, struct ecs_renderer **out) {
+b8 ecs_renderer_try_alloc(u32 width, u32 height, GLFWwindow *window, struct ecs_renderer **out) {
 	ECS_ASSERT(window, "Given GLFW window pointer is null!");
 	ECS_ASSERT(out, "Given out pointer is null!");
 	ECS_ASSERT_NE(*out, "Given out pointer points to non-null value (would overwrite existing renderer)!");
@@ -562,6 +571,12 @@ b8 ecs_renderer_try_setup(u32 width, u32 height, GLFWwindow *window, struct ecs_
 			goto cleanup;
 		}
 
+		succeeded = ecs_renderer_try_create_index_buffers(*out);
+		if (!succeeded) {
+			printf("Could not create index buffers!\n");
+			goto cleanup;
+		}
+
 		succeeded = ecs_renderer_try_create_command_buffers(*out);
 		if (!succeeded) {
 			printf("Could not create command buffers!\n");
@@ -577,7 +592,7 @@ b8 ecs_renderer_try_setup(u32 width, u32 height, GLFWwindow *window, struct ecs_
 		return true;
 
 cleanup:
-		ecs_renderer_teardown(*out);
+		ecs_renderer_free(*out);
 		*out = NULL;
 
 		return false;
@@ -589,12 +604,15 @@ cleanup:
 	return false;
 }
 
-void ecs_renderer_teardown(struct ecs_renderer *renderer) {
+void ecs_renderer_free(struct ecs_renderer *renderer) {
 	ECS_ASSERT(renderer, "Given renderer pointer is null!");
 
 	vkDeviceWaitIdle(renderer->device);
 
 	ecs_renderer_cleanup_swapchain(renderer);
+
+	vkDestroyBuffer(renderer->device, renderer->index_buffer, vk_allocator);
+	vkFreeMemory(renderer->device, renderer->index_buffer_memory, vk_allocator);
 
 	vkDestroyBuffer(renderer->device, renderer->vertex_buffer, vk_allocator);
 	vkFreeMemory(renderer->device, renderer->vertex_buffer_memory, vk_allocator);
@@ -1351,6 +1369,39 @@ static b8 ecs_renderer_try_create_vertex_buffers(struct ecs_renderer *renderer) 
 	return true;
 }
 
+static b8 ecs_renderer_try_create_index_buffers(struct ecs_renderer *renderer) {
+	VkDeviceSize index_buffer_size = sizeof(u32) * index_count;
+
+	VkBufferUsageFlags staging_usage_flags = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+	VkMemoryPropertyFlags staging_property_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+	VkBuffer staging_buffer;
+	VkDeviceMemory staging_buffer_memory;
+	if (!try_create_buffer(renderer->device, renderer->physical_device, index_buffer_size, staging_usage_flags, staging_property_flags, &staging_buffer, &staging_buffer_memory)) {
+		return false;
+	}
+
+	void* data;
+	vkMapMemory(renderer->device, staging_buffer_memory, 0, index_buffer_size, 0, &data);
+	memcpy(data, indices, index_buffer_size);
+	vkUnmapMemory(renderer->device, staging_buffer_memory);
+
+	VkBufferUsageFlags usage_flags = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+	VkMemoryPropertyFlags property_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+	if (!try_create_buffer(renderer->device, renderer->physical_device, index_buffer_size, usage_flags, property_flags, &renderer->index_buffer, &renderer->index_buffer_memory)) {
+		return false;
+	}
+
+	if (!try_copy_buffer(renderer->device, renderer->command_pool, renderer->graphics_queue, staging_buffer, renderer->index_buffer, index_buffer_size)) {
+		return false;
+	}
+
+	vkDestroyBuffer(renderer->device, staging_buffer, vk_allocator);
+	vkFreeMemory(renderer->device, staging_buffer_memory, vk_allocator);
+
+	return true;
+}
+
 static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer) {
 	if (renderer->command_buffers) {
 		renderer->command_buffers = realloc(renderer->command_buffers, sizeof(VkCommandBuffer) * renderer->swapchain_image_count);
@@ -1398,8 +1449,9 @@ static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer)
 		VkBuffer vertex_buffers[] = { renderer->vertex_buffer };
 		VkDeviceSize offsets[] = { 0 };
 		vkCmdBindVertexBuffers(renderer->command_buffers[i], 0, 1, vertex_buffers, offsets);
+		vkCmdBindIndexBuffer(renderer->command_buffers[i], renderer->index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
-		vkCmdDraw(renderer->command_buffers[i], vertex_count, 1, 0, 0);
+		vkCmdDrawIndexed(renderer->command_buffers[i], index_count, 1, 0, 0, 0);
 
 		vkCmdEndRenderPass(renderer->command_buffers[i]);
 
