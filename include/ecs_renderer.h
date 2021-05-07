@@ -20,4 +20,10 @@ struct ecs_vertex {
 	vec3 colour;
 };
 
+struct ecs_uniform_buffer_object {
+	_Alignas(16) mat4 model;
+	_Alignas(16) mat4 view;
+	_Alignas(16) mat4 proj;
+};
+
 #endif // ECS_RENDERER

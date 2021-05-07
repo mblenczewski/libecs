@@ -3,6 +3,7 @@
 #include "ecs_renderer.h"
 
 #include <string.h>
+#include <time.h>
 #include <cglm/cglm.h>
 
 const VkAllocationCallbacks *vk_allocator = NULL;
@@ -143,6 +144,9 @@ struct ecs_renderer {
 	b8 framebuffers_were_resized;
 
 	VkRenderPass render_pass;
+	VkDescriptorSetLayout descriptor_set_layout;
+	VkDescriptorPool descriptor_pool;
+	VkDescriptorSet *descriptor_sets;
 	VkPipelineLayout pipeline_layout;
 	VkPipeline pipeline;
 
@@ -150,6 +154,9 @@ struct ecs_renderer {
 	VkDeviceMemory vertex_buffer_memory;
 	VkBuffer index_buffer;
 	VkDeviceMemory index_buffer_memory;
+
+	VkBuffer *uniform_buffers;
+	VkDeviceMemory *uniform_buffer_memories;
 
 	VkCommandPool command_pool;
 	VkCommandBuffer *command_buffers;
@@ -466,11 +473,15 @@ static b8 ecs_renderer_try_create_swapchain(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_recreate_swapchain(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_image_views(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_render_pass(struct ecs_renderer *renderer);
+static b8 ecs_renderer_try_create_descriptor_set_layout(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_graphics_pipeline(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_framebuffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_command_pool(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_vertex_buffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_index_buffers(struct ecs_renderer *renderer);
+static b8 ecs_renderer_try_create_uniform_buffers(struct ecs_renderer *renderer);
+static b8 ecs_renderer_try_create_descriptor_pool(struct ecs_renderer *renderer);
+static b8 ecs_renderer_try_create_descriptor_sets(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer);
 static b8 ecs_renderer_try_create_semaphores(struct ecs_renderer *renderer);
 
@@ -547,6 +558,12 @@ b8 ecs_renderer_try_alloc(u32 width, u32 height, GLFWwindow *window, struct ecs_
 			goto cleanup;
 		}
 
+		succeeded = ecs_renderer_try_create_descriptor_set_layout(*out);
+		if (!succeeded) {
+			printf("Could not create descriptor set layout!\n");
+			goto cleanup;
+		}
+
 		succeeded = ecs_renderer_try_create_graphics_pipeline(*out);
 		if (!succeeded) {
 			printf("Could not create graphics pipeline!\n");
@@ -574,6 +591,24 @@ b8 ecs_renderer_try_alloc(u32 width, u32 height, GLFWwindow *window, struct ecs_
 		succeeded = ecs_renderer_try_create_index_buffers(*out);
 		if (!succeeded) {
 			printf("Could not create index buffers!\n");
+			goto cleanup;
+		}
+
+		succeeded = ecs_renderer_try_create_uniform_buffers(*out);
+		if (!succeeded) {
+			printf("Could not create uniform buffers!\n");
+			goto cleanup;
+		}
+
+		succeeded = ecs_renderer_try_create_descriptor_pool(*out);
+		if (!succeeded) {
+			printf("Could not create descriptor pool!\n");
+			goto cleanup;
+		}
+
+		succeeded = ecs_renderer_try_create_descriptor_sets(*out);
+		if (!succeeded) {
+			printf("Could not create descriptor sets!\n");
 			goto cleanup;
 		}
 
@@ -611,6 +646,8 @@ void ecs_renderer_free(struct ecs_renderer *renderer) {
 
 	ecs_renderer_cleanup_swapchain(renderer);
 
+	vkDestroyDescriptorSetLayout(renderer->device, renderer->descriptor_set_layout, vk_allocator);
+
 	vkDestroyBuffer(renderer->device, renderer->index_buffer, vk_allocator);
 	vkFreeMemory(renderer->device, renderer->index_buffer_memory, vk_allocator);
 
@@ -635,6 +672,53 @@ void ecs_renderer_free(struct ecs_renderer *renderer) {
 	vkDestroyInstance(renderer->instance, vk_allocator);
 
 	free(renderer);
+}
+
+void ecs_renderer_update_uniform_buffer(struct ecs_renderer *renderer, u32 image_index) {
+	/*
+	 * static auto start_time = std::chrono::high_resolution_clock::now();
+	 *
+	 * auto current_time = std::chrono::high_resolution_clock::now();
+	 * float time std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time).count();
+	 */
+	static clock_t old_time = NULL;
+	clock_t new_time = NULL;
+
+	if (old_time == NULL) {
+		old_time = clock();
+		new_time = old_time;
+	} else {
+		new_time = clock();
+	}
+
+	f32 time_passed_since_start = ((f32) (new_time - old_time)) / CLOCKS_PER_SEC;
+	
+	struct ecs_uniform_buffer_object ubo = {0};
+	glm_mat4_identity(ubo.model);
+	glm_mat4_identity(ubo.view);
+	glm_mat4_identity(ubo.proj);
+
+	vec3 rotate_axis = {0.0f, 0.0f, 1.0f};
+	vec3 lookat_eye = {2.0f, 2.0f, 2.0f};
+	vec3 lookat_centre = {0.0f, 0.0f, 0.0f};
+	vec3 lookat_up = {0.0f, 0.0f, 1.0f};
+
+	// perspective related variables
+	f32 fov = glm_rad(45.0f);
+	f32 aspect_ratio = (f32) renderer->swapchain_extent.width / (f32) renderer->swapchain_extent.height;
+	f32 near = 0.1f, far = 10.0f;
+
+	glm_rotate(ubo.model, time_passed_since_start * glm_rad(90.0f), rotate_axis);
+	glm_lookat(lookat_eye, lookat_centre, lookat_up, ubo.view);
+	glm_perspective(fov, aspect_ratio, near, far, ubo.proj);
+
+	// correct for cglm's assumed coordinate system
+	ubo.proj[1][1] *= -1;
+
+	void *data;
+	vkMapMemory(renderer->device, renderer->uniform_buffer_memories[image_index], 0, sizeof(struct ecs_uniform_buffer_object), 0, &data);
+	memcpy(data, &ubo, sizeof(struct ecs_uniform_buffer_object));
+	vkUnmapMemory(renderer->device, renderer->uniform_buffer_memories[image_index]);
 }
 
 void ecs_renderer_render_frame(struct ecs_renderer *renderer) {
@@ -669,6 +753,8 @@ void ecs_renderer_render_frame(struct ecs_renderer *renderer) {
 	const VkSemaphore signal_semaphores[] = {
 		renderer->render_finished_semaphores[renderer->current_frame],
 	};
+
+	ecs_renderer_update_uniform_buffer(renderer, image_index);
 
 	VkSubmitInfo submit_info = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1009,6 +1095,18 @@ static b8 ecs_renderer_try_recreate_swapchain(struct ecs_renderer *renderer) {
 	if (!succeeded)
 		return false;
 
+	succeeded = ecs_renderer_try_create_uniform_buffers(renderer);
+	if (!succeeded)
+		return false;
+
+	succeeded = ecs_renderer_try_create_descriptor_pool(renderer);
+	if (!succeeded)
+		return false;
+
+	succeeded = ecs_renderer_try_create_descriptor_sets(renderer);
+	if (!succeeded)
+		return false;
+
 	succeeded = ecs_renderer_try_create_command_buffers(renderer);
 
 	return succeeded;
@@ -1030,6 +1128,13 @@ static void ecs_renderer_cleanup_swapchain(struct ecs_renderer *renderer) {
 	}
 
 	vkDestroySwapchainKHR(renderer->device, renderer->swapchain, vk_allocator);
+
+	for (usize i = 0; i < renderer->swapchain_image_count; i++) {
+		vkDestroyBuffer(renderer->device, renderer->uniform_buffers[i], vk_allocator);
+		vkFreeMemory(renderer->device, renderer->uniform_buffer_memories[i], vk_allocator);
+	}
+
+	vkDestroyDescriptorPool(renderer->device, renderer->descriptor_pool, vk_allocator);
 }
 
 static b8 ecs_renderer_try_create_image_views(struct ecs_renderer *renderer) {
@@ -1119,6 +1224,32 @@ static b8 ecs_renderer_try_create_render_pass(struct ecs_renderer *renderer) {
 	return result == VK_SUCCESS;
 }
 
+static b8 ecs_renderer_try_create_descriptor_set_layout(struct ecs_renderer *renderer) {
+	VkDescriptorSetLayoutBinding uniform_buffer_object_layout_binding = {
+		.binding = 0,
+		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		.descriptorCount = 1,
+		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+		.pImmutableSamplers = NULL,
+	};
+
+	VkDescriptorSetLayoutBinding layout_bindings[] = {
+		uniform_buffer_object_layout_binding,
+	};
+
+	VkDescriptorSetLayoutCreateInfo layout_create_info = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.bindingCount = sizeof(layout_bindings) / sizeof(VkDescriptorSetLayoutBinding),
+		.pBindings = layout_bindings,
+	};
+
+	if (vkCreateDescriptorSetLayout(renderer->device, &layout_create_info, vk_allocator, &renderer->descriptor_set_layout) != VK_SUCCESS) {
+		return false;
+	}
+
+	return true;
+}
+
 static b8 ecs_renderer_try_create_graphics_pipeline(struct ecs_renderer *renderer) {
 	u32 *vert_shader = NULL;
 	usize vert_shader_size = read_sprv_shader("out/base.vert.spv", &vert_shader);
@@ -1203,7 +1334,7 @@ static b8 ecs_renderer_try_create_graphics_pipeline(struct ecs_renderer *rendere
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.lineWidth = 1.0f,
 		.cullMode = VK_CULL_MODE_BACK_BIT,
-		.frontFace = VK_FRONT_FACE_CLOCKWISE,
+		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
 		.depthBiasEnable = VK_FALSE,
 		.depthBiasConstantFactor = 0.0f,
 		.depthBiasClamp = 0.0f,
@@ -1249,8 +1380,8 @@ static b8 ecs_renderer_try_create_graphics_pipeline(struct ecs_renderer *rendere
 
 	VkPipelineLayoutCreateInfo layout_create_info = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount = 0,
-		.pSetLayouts = NULL,
+		.setLayoutCount = 1,
+		.pSetLayouts = &renderer->descriptor_set_layout,
 		.pushConstantRangeCount = 0,
 		.pPushConstantRanges = NULL,
 	};
@@ -1402,6 +1533,100 @@ static b8 ecs_renderer_try_create_index_buffers(struct ecs_renderer *renderer) {
 	return true;
 }
 
+static b8 ecs_renderer_try_create_uniform_buffers(struct ecs_renderer *renderer) {
+	VkDeviceSize uniform_buffer_size = sizeof(struct ecs_uniform_buffer_object);
+
+	if (renderer->uniform_buffers) {
+		renderer->uniform_buffers = realloc(renderer->uniform_buffers, sizeof(VkBuffer) * renderer->swapchain_image_count);
+		renderer->uniform_buffer_memories = realloc(renderer->uniform_buffer_memories, sizeof(VkDeviceMemory) * renderer->swapchain_image_count);
+	} else {
+		renderer->uniform_buffers = malloc(sizeof(VkBuffer) * renderer->swapchain_image_count);
+		renderer->uniform_buffer_memories = malloc(sizeof(VkDeviceMemory) * renderer->swapchain_image_count);
+	}
+
+	VkBufferUsageFlags usage_flags = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+	VkMemoryPropertyFlags property_flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+	for (usize i = 0; i < renderer->swapchain_image_count; i++) {
+		if (!try_create_buffer(renderer->device, renderer->physical_device, uniform_buffer_size, usage_flags, property_flags, &renderer->uniform_buffers[i], &renderer->uniform_buffer_memories[i])) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static b8 ecs_renderer_try_create_descriptor_pool(struct ecs_renderer *renderer) {
+	VkDescriptorPoolSize descriptor_pool_size = {
+		.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		.descriptorCount = renderer->swapchain_image_count,
+	};
+
+	VkDescriptorPoolCreateInfo descriptor_pool_create_info = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.poolSizeCount = 1,
+		.pPoolSizes = &descriptor_pool_size,
+		.maxSets = renderer->swapchain_image_count,
+	};
+
+	if (vkCreateDescriptorPool(renderer->device, &descriptor_pool_create_info, vk_allocator, &renderer->descriptor_pool) != VK_SUCCESS) {
+		return false;
+	}
+
+	return true;
+}
+
+static b8 ecs_renderer_try_create_descriptor_sets(struct ecs_renderer *renderer) {
+	VkDescriptorSetLayout *descriptor_set_layouts = malloc(sizeof(VkDescriptorSetLayout) * renderer->swapchain_image_count);
+
+	for (usize i = 0; i < renderer->swapchain_image_count; i++) {
+		descriptor_set_layouts[i] = renderer->descriptor_set_layout;
+	}
+
+	VkDescriptorSetAllocateInfo descriptor_set_allocate_info = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = renderer->descriptor_pool,
+		.descriptorSetCount = renderer->swapchain_image_count,
+		.pSetLayouts = descriptor_set_layouts,
+	};
+
+	if (renderer->descriptor_sets) {
+		renderer->descriptor_sets = realloc(renderer->descriptor_sets, sizeof(VkDescriptorSet) * renderer->swapchain_image_count);
+	} else {
+		renderer->descriptor_sets = malloc(sizeof(VkDescriptorSet) * renderer->swapchain_image_count);
+	}
+
+	if (vkAllocateDescriptorSets(renderer->device, &descriptor_set_allocate_info, renderer->descriptor_sets) != VK_SUCCESS) {
+		free(descriptor_set_layouts);
+		return false;
+	}
+
+	for (usize i = 0; i < renderer->swapchain_image_count; i++) {
+		VkDescriptorBufferInfo descriptor_buffer_info = {
+			.buffer = renderer->uniform_buffers[i],
+			.offset = 0,
+			.range = sizeof(struct ecs_uniform_buffer_object),
+		};
+
+		VkWriteDescriptorSet descriptor_set_write = {
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = renderer->descriptor_sets[i],
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &descriptor_buffer_info,
+			.pImageInfo = NULL,
+			.pTexelBufferView = NULL,
+		};
+
+		vkUpdateDescriptorSets(renderer->device, 1, &descriptor_set_write, 0, NULL);
+	}
+
+	free(descriptor_set_layouts);
+	return true;
+}
+
 static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer) {
 	if (renderer->command_buffers) {
 		renderer->command_buffers = realloc(renderer->command_buffers, sizeof(VkCommandBuffer) * renderer->swapchain_image_count);
@@ -1450,6 +1675,8 @@ static b8 ecs_renderer_try_create_command_buffers(struct ecs_renderer *renderer)
 		VkDeviceSize offsets[] = { 0 };
 		vkCmdBindVertexBuffers(renderer->command_buffers[i], 0, 1, vertex_buffers, offsets);
 		vkCmdBindIndexBuffer(renderer->command_buffers[i], renderer->index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+		vkCmdBindDescriptorSets(renderer->command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->pipeline_layout, 0, 1, &renderer->descriptor_sets[i], 0, NULL);
 
 		vkCmdDrawIndexed(renderer->command_buffers[i], index_count, 1, 0, 0, 0);
 

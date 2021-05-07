@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
 	/* cglm test */
 	mat4 matrix = {0};
 	vec4 vector = {0}, out = {0};
-	glm_mat4_mulv(matrix, vector, out);
+	glmc_mat4_mulv(matrix, vector, out);
 
 	glfwInit();
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
